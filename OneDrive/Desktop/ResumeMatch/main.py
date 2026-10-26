@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
@@ -13,6 +14,7 @@ from resume_checker.skills_db import ALL_SKILLS, SKILL_GROUPS, suggest
 
 BASE = Path(__file__).parent / "frontend"
 app = FastAPI(title="ResumeLens")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 # ---------- pages ----------
@@ -52,6 +54,33 @@ async def api_analyze(files: list[UploadFile] = File(...), skills: str = Form(..
             results.append(analyze_file(name, data, wanted))
     results.sort(key=lambda r: r.get("match_percent", -1), reverse=True)
     return {"results": results}
+
+
+# ---------- shortlist zip: only original resumes at or above the threshold ----------
+@app.post("/api/shortlist")
+async def api_shortlist(files: list[UploadFile] = File(...), skills: str = Form(...),
+                        threshold: float = Form(70)):
+    wanted = [s.strip() for s in skills.replace("\n", ",").split(",") if s.strip()]
+    if not wanted:
+        raise HTTPException(400, "Add at least one skill")
+    buf, used, count = io.BytesIO(), set(), 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for f in files:
+            for name, data in iter_resumes(f.filename, await f.read()):
+                r = analyze_file(name, data, wanted)
+                if "error" in r or r["match_percent"] < threshold:
+                    continue
+                arc, n = name, 1
+                while arc in used:                       # same file name twice
+                    n += 1
+                    arc = f"{n}_{name}"
+                used.add(arc)
+                z.writestr(arc, data)
+                count += 1
+    if not count:
+        raise HTTPException(404, f"No resume reached {threshold:g}%")
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": "attachment; filename=shortlisted_resumes.zip"})
 
 
 # ---------- zip report ----------

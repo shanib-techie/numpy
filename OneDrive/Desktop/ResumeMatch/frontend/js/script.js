@@ -1,4 +1,7 @@
 const $ = id => document.getElementById(id);
+// If the page is opened from a file or Live Server, talk to the FastAPI server directly.
+const API = (location.protocol === "file:" || ["5500", "5501", "3000", "5173"].includes(location.port)) ? "http://127.0.0.1:8000" : "";
+const NO_SERVER = "Cannot reach the server. Run: uvicorn main:app --reload  then open http://127.0.0.1:8000";
 const picked = new Map();            // name(lower) -> {name, custom}
 let files = [], lastResults = [], act = -1, items = [], timer;
 
@@ -30,7 +33,7 @@ function closeSugg() { $("sugg").hidden = true; act = -1; }
 
 async function search(q) {
   if (!q.trim()) return closeSugg();
-  const r = await (await fetch("/api/suggest?q=" + encodeURIComponent(q))).json();
+  const r = await (await fetch(API + "/api/suggest?q=" + encodeURIComponent(q))).json();
   items = [
     ...r.groups.map(g => ({ type: "group", name: g.name, count: g.count })),
     ...r.skills.map(s => ({ type: "skill", name: s.skill, group: s.group })),
@@ -47,7 +50,7 @@ async function search(q) {
   box.hidden = false;
 }
 async function addGroup(name) {
-  const data = await (await fetch("/api/groups")).json();
+  const data = await (await fetch(API + "/api/groups")).json();
   (data.groups[name] || []).forEach(s => addSkill(s));
 }
 function choose(i) {
@@ -72,7 +75,7 @@ $("q").addEventListener("keydown", e => {
 $("q").addEventListener("blur", () => setTimeout(closeSugg, 100));
 
 (async () => {                       // browse by field
-  const data = await (await fetch("/api/groups")).json();
+  const data = await (await fetch(API + "/api/groups")).json();
   $("browseHead").textContent = `Or browse ${data.total} skills by field`;
   Object.entries(data.groups).forEach(([g, list]) => {
     const b = el("button", "gbtn", `${g} (${list.length})`);
@@ -94,6 +97,10 @@ $("file").onchange = e => setFiles(e.target.files);
 ["dragleave", "drop"].forEach(t => $("drop").addEventListener(t, () => $("drop").classList.remove("over")));
 $("drop").addEventListener("drop", e => { e.preventDefault(); setFiles(e.dataTransfer.files); });
 
+// ---------- threshold ----------
+const threshold = () => parseFloat($("thrR").value);
+$("thrR").addEventListener("input", () => { $("thrV").textContent = $("thrR").value; if (lastResults.length) render(lastResults); });
+
 // ---------- analyze ----------
 $("go").onclick = async () => {
   $("status").className = "mute";
@@ -104,12 +111,24 @@ $("go").onclick = async () => {
   files.forEach(f => fd.append("files", f));
   fd.append("skills", [...picked.values()].map(s => s.name).join(","));
   try {
-    const res = await fetch("/api/analyze", { method: "POST", body: fd });
+    const res = await fetch(API + "/api/analyze", { method: "POST", body: fd });
     if (!res.ok) throw new Error((await res.json()).detail || "Request failed");
     lastResults = (await res.json()).results; render(lastResults); $("status").textContent = "";
-  } catch (e) { $("status").textContent = e.message; $("status").className = "err"; }
+  } catch (e) { $("status").textContent = e instanceof TypeError ? NO_SERVER : e.message; $("status").className = "err"; }
   $("go").disabled = false;
 };
+
+async function downloadShortlist() {
+  const fd = new FormData();
+  files.forEach(f => fd.append("files", f));
+  fd.append("skills", [...picked.values()].map(s => s.name).join(","));
+  fd.append("threshold", threshold());
+  let res;
+  try { res = await fetch(API + "/api/shortlist", { method: "POST", body: fd }); }
+  catch { $("status").className = "err"; return ($("status").textContent = NO_SERVER); }
+  if (!res.ok) { $("status").className = "err"; return ($("status").textContent = (await res.json()).detail || "Download failed"); }
+  el("a", "", "", { href: URL.createObjectURL(await res.blob()), download: "shortlisted_resumes.zip" }).click();
+}
 
 function chips(list, cls) {
   const w = el("div", "chips");
@@ -118,9 +137,15 @@ function chips(list, cls) {
 }
 function render(results) {
   const box = $("results"); box.replaceChildren();
+  const t = threshold(), pass = results.filter(r => !r.error && r.match_percent >= t).length;
+  const sum = el("div", "card row"); sum.append(el("b", "", `${pass} of ${results.length} resumes reach ${t}% or more`));
+  const dl = el("button", "btn", "Download shortlisted resumes (.zip)"); dl.disabled = !pass; dl.onclick = downloadShortlist;
+  sum.append(dl); box.append(sum);
   results.forEach(r => {
+    const ok = !r.error && r.match_percent >= t;
     const c = el("div", "card");
     const head = el("div", "row"); head.append(el("b", "", r.filename));
+    if (ok) head.append(el("span", "chip ok static", "Shortlisted"));
     if (r.error) { c.append(head, el("p", "err", r.error)); box.append(c); return; }
     head.append(el("span", "score", r.match_percent + "%"));
     const bar = el("div", "bar"); const i = el("i"); i.style.width = r.match_percent + "%"; bar.append(i);
@@ -129,9 +154,9 @@ function render(results) {
     const ul = el("ul"); r.suggestions.forEach(t => ul.append(el("li", "", t)));
     c.append(el("b", "", "Suggestions"), ul); box.append(c);
   });
-  const z = el("button", "btn ghost", "Download report (.zip)");
+  const z = el("button", "btn ghost", "Download analysis report (.zip)");
   z.onclick = async () => {
-    const res = await fetch("/api/report-zip", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results: lastResults }) });
+    const res = await fetch(API + "/api/report-zip", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ results: lastResults }) });
     el("a", "", "", { href: URL.createObjectURL(await res.blob()), download: "resumelens_report.zip" }).click();
   };
   box.append(z);

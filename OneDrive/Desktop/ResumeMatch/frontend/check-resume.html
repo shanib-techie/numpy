@@ -7,6 +7,9 @@
 <div class="box"><input type="text" id="q" placeholder="Search a skill or field, e.g. data, graphic, tally. Press Enter to add your own" autocomplete="off"><div class="sugg" id="sugg" hidden></div></div>
 <div class="chips" id="picked"></div>
 <p class="mute" id="browseHead">Or browse by field</p><div class="groups" id="groups"></div><div class="chips" id="groupSkills"></div></div>
+<div class="card"><b>3. Minimum match</b>
+<p class="mute">Resumes at or above this score are shortlisted. Only they go into the download zip.</p>
+<div class="row" style="justify-content:flex-start"><input type="range" id="thrR" min="0" max="100" value="70" style="width:260px"><b><span id="thrV">70</span>%</b></div></div>
 <button class="btn" id="go">Check resume</button> <span id="status" class="mute"></span>
 <div id="results"></div></main>
 <footer>ResumeLens</footer><script src="/js/script.js"></script></body></html>
